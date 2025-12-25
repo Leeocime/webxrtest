@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebXR Basic Example</title>
+  <style>
+    body { margin: 0; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script>
+    async function onXRButtonClick() {
+      const sessionInit = { optionalFeatures: ['local-floor', 'bounded-floor'] };
+      const xrButton = document.querySelector('#xr-button');
+      const session = await navigator.xr.requestSession('immersive-vr', sessionInit);
+      xrButton.textContent = 'Exit XR';
+      
+      const gl = document.createElement('canvas').getContext('webgl', { xrCompatible: true });
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ canvas: gl.canvas, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+      const cube = new THREE.Mesh(geometry, material);
+      scene.add(cube);
+
+
+      camera.position.z = 5;
+
+      function animate() {
+        requestAnimationFrame(animate);
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      }
+
+      animate();
+
+      session.requestAnimationFrame(onFrame);
+      
+      function onFrame(time, frame) {
+        const pose = frame.getViewerPose(session.baseLayer.getFrameData().pose);
+        if (pose) {
+          const view = frame.views[0];
+          const viewport = session.baseLayer.getViewport(view);
+          renderer.setSize(viewport.width, viewport.height);
+          renderer.setFramebuffer(frame.renderState.baseLayer.framebuffer);
+          renderer.render(scene, camera);
+        }
+      }
+
+      xrButton.onclick = () => {
+        session.end();
+        xrButton.textContent = 'Enter XR';
+      };
+    }
+    
+    document.querySelector('#xr-button').onclick = onXRButtonClick;
+  </script>
+  <button id="xr-button">Enter XR</button>
+</body>
+</html>
