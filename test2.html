@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebXR 播放视频</title>
+    <style>
+        body { margin: 0; background-color: #000; color: #fff; }
+        #xr-button { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 24px; font-size: 16px; cursor: pointer; background: #4285f4; border: none; border-radius: 4px; color: white; }
+        #xr-button:disabled { background: #ccc; cursor: not-allowed; }
+        video { display: none; /* 隐藏视频元素，仅作为纹理源 */ }
+    </style>
+</head>
+<body>
+    <!-- 隐藏的视频元素 -->
+    <video id="video" loop muted playsinline>
+        <!-- 替换为你的视频地址（建议同域，或配置CORS） -->
+        <source src="your-video.mp4" type="video/mp4">
+    </video>
+
+    <!-- XR 启动按钮 -->
+    <button id="xr-button" disabled>进入 AR 查看视频</button>
+
+    <!-- Three.js 依赖 -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/webxr/XRButton.js"></script>
+
+    <script>
+        // 1. 初始化核心变量
+        let scene, camera, renderer, xrSession, video, videoTexture;
+        const xrButton = document.getElementById('xr-button');
+        video = document.getElementById('video');
+
+        // 2. 初始化 Three.js 场景
+        function initScene() {
+            // 场景
+            scene = new THREE.Scene();
+            
+            // 相机（适配移动设备）
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            
+            // 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.xr.enabled = true; // 启用 XR
+            document.body.appendChild(renderer.domElement);
+
+            // 3. 创建视频纹理
+            createVideoTexture();
+
+            // 4. 创建带视频纹理的平面（作为视频载体）
+            createVideoPlane();
+
+            // 5. 适配窗口大小
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // 3. 创建视频纹理
+        function createVideoTexture() {
+            // 创建视频纹理
+            videoTexture = new THREE.VideoTexture(video);
+            // 设置纹理参数（避免拉伸/模糊）
+            videoTexture.minFilter = THREE.LinearFilter;
+            videoTexture.magFilter = THREE.LinearFilter;
+            videoTexture.format = THREE.RGBAFormat;
+            videoTexture.flipY = false; // 视频纹理默认需要翻转Y轴（根据需求调整）
+        }
+
+        // 4. 创建带视频纹理的平面
+        function createVideoPlane() {
+            // 平面几何体（宽高比建议匹配视频，比如16:9）
+            const planeGeometry = new THREE.PlaneGeometry(1.6, 0.9); // 16:9 比例，宽度1.6米，高度0.9米
+            // 视频材质
+            const videoMaterial = new THREE.MeshBasicMaterial({
+                map: videoTexture,
+                side: THREE.DoubleSide, // 双面渲染
+                transparent: true
+            });
+            // 创建网格并添加到场景
+            const videoPlane = new THREE.Mesh(planeGeometry, videoMaterial);
+            // 调整位置（在相机前方1.5米处）
+            videoPlane.position.set(0, 0, -1.5);
+            scene.add(videoPlane);
+        }
+
+        // 6. 初始化 XR 支持
+        async function initXR() {
+            if (!navigator.xr) {
+                xrButton.textContent = "你的浏览器不支持 WebXR";
+                return;
+            }
+
+            try {
+                // 检查 AR 会话支持
+                const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (isSupported) {
+                    xrButton.disabled = false;
+                    xrButton.addEventListener('click', startXRSession);
+                } else {
+                    xrButton.textContent = "你的设备不支持 AR";
+                }
+            } catch (err) {
+                console.error("XR 初始化失败:", err);
+                xrButton.textContent = "XR 初始化失败";
+            }
+        }
+
+        // 7. 启动 XR 会话
+        async function startXRSession() {
+            try {
+                // 请求 AR 会话（immersive-ar 为沉浸式AR，inline 为内联AR）
+                xrSession = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hit-test', 'plane-detection'] // 可选：平面检测/点击测试
+                });
+
+                // 绑定会话到渲染器
+                await renderer.xr.setSession(xrSession);
+
+                // 触发视频播放（用户交互后播放，符合自动播放策略）
+                await video.play();
+                console.log("视频开始播放");
+
+                // 监听会话结束
+                xrSession.addEventListener('end', onXRSessionEnded);
+
+                // 更新按钮文本
+                xrButton.textContent = "退出 AR";
+                xrButton.removeEventListener('click', startXRSession);
+                xrButton.addEventListener('click', stopXRSession);
+            } catch (err) {
+                console.error("启动 XR 会话失败:", err);
+                xrButton.textContent = "启动 AR 失败";
+            }
+        }
+
+        // 8. 停止 XR 会话
+        async function stopXRSession() {
+            if (xrSession) {
+                await xrSession.end();
+            }
+        }
+
+        // 9. 处理 XR 会话结束
+        function onXRSessionEnded() {
+            xrSession = null;
+            video.pause(); // 暂停视频
+            xrButton.textContent = "进入 AR 查看视频";
+            xrButton.removeEventListener('click', stopXRSession);
+            xrButton.addEventListener('click', startXRSession);
+        }
+
+        // 10. 窗口大小适配
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 11. 动画循环
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render() {
+            // 如果视频纹理有效，更新纹理（确保视频帧同步）
+            if (videoTexture) {
+                videoTexture.needsUpdate = true;
+            }
+            renderer.render(scene, camera);
+        }
+
+        // 初始化流程
+        initScene();
+        initXR();
+        animate();
+    </script>
+</body>
+</html>
