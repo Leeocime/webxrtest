@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport"
         content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-  <title>Hello WebXR! - 双目立方体</title>
+  <title>Hello WebXR! - 双目立方体（修复版）</title>
 
-  <!-- 保持原 Three.js 版本（0.126.0），避免版本兼容问题 -->
+  <!-- 保持原 Three.js 版本，避免兼容问题 -->
   <script src="https://unpkg.com/three@0.126.0/build/three.js"></script>
 </head>
 <body>
@@ -14,14 +14,13 @@
 
 <script>
 async function activateXR() {
-  // 步骤1：创建兼容 WebXR 的 Canvas 和 WebGL 上下文
+  // 1. 创建兼容 WebXR 的 Canvas 和 WebGL 上下文
   const canvas = document.createElement("canvas");
   document.body.appendChild(canvas);
   const gl = canvas.getContext("webgl", {xrCompatible: true});
 
-  // 步骤2：初始化 Three.js 核心对象
+  // 2. 初始化 Three.js 核心对象
   const scene = new THREE.Scene();
-  // 可选：添加背景色（辅助调试，AR 中最终会透明）
   scene.background = new THREE.Color(0x000000);
   scene.background.alpha = 0;
 
@@ -35,61 +34,61 @@ async function activateXR() {
     new THREE.MeshBasicMaterial({color: 0xffff00})
   ];
   const cube = new THREE.Mesh(new THREE.BoxBufferGeometry(0.2, 0.2, 0.2), materials);
-  cube.position.set(1, 1, 1); // 位置不变
+  // 调整位置：相机正前方 1 米（更容易看到）
+  cube.position.set(0, 0, -1); 
   scene.add(cube);
 
-  // 步骤3：初始化渲染器（修改核心1：恢复 autoClear，或手动清理）
+  // 3. 初始化渲染器（关键修改1：关闭 autoClear，手动控制清理）
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
     preserveDrawingBuffer: true,
     canvas: canvas,
     context: gl
   });
-  // 关键修改1：恢复 autoClear = true（默认值），让 Three.js 自动清理缓冲
-  renderer.autoClear = true;
-  // 开启深度测试（避免立方体面重叠渲染错误）
-  renderer.autoClearDepth = true;
+  renderer.autoClear = false; // 必须关闭自动清理！
+  renderer.autoClearColor = false;
+  renderer.autoClearDepth = false;
 
   // 相机（保持原有配置）
   const camera = new THREE.PerspectiveCamera();
   camera.matrixAutoUpdate = false;
 
-  // 步骤4：初始化 WebXR 会话
+  // 4. 初始化 WebXR 会话
   const session = await navigator.xr.requestSession("immersive-ar");
   session.updateRenderState({
     baseLayer: new XRWebGLLayer(session, gl)
   });
   const referenceSpace = await session.requestReferenceSpace('local');
 
-  // 步骤5：修复后的 XR 渲染循环（核心修改）
+  // 5. 最终修复的渲染循环（核心！）
   const onXRFrame = (time, frame) => {
     session.requestAnimationFrame(onXRFrame);
 
     const pose = frame.getViewerPose(referenceSpace);
     if (pose) {
-      // 关键修改2：遍历所有 view（左眼 + 右眼），而非只取第一个
-      for (const view of pose.views) {
-        // 每个 view 对应自己的视口
-        const viewport = session.renderState.baseLayer.getViewport(view);
-        // 设置渲染器的视口（左眼/右眼分别渲染到对应区域）
-        renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
-        
-        // 关键修改3：绑定当前 view 的帧缓冲（而非全局绑定）
-        gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
+      // 关键修改2：在渲染所有 view 前，手动清理一次缓冲（只清一次！）
+      gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
+      renderer.clear(); // 手动清理颜色+深度缓冲
 
-        // 更新相机矩阵（每个 view 有自己的矩阵）
+      // 遍历所有 view（左眼 + 右眼）
+      for (const view of pose.views) {
+        // 关键修改3：每个 view 单独设置视口（x/y 是关键，区分左右眼区域）
+        const viewport = session.renderState.baseLayer.getViewport(view);
+        renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+        // 更新当前 view 的相机矩阵（左右眼有不同的矩阵）
         camera.matrix.fromArray(view.transform.matrix);
         camera.projectionMatrix.fromArray(view.projectionMatrix);
         camera.updateMatrixWorld(true);
 
-        // 渲染当前 view 的场景（左眼/右眼分别渲染）
+        // 渲染当前 view 的场景（不清理，直接渲染）
         renderer.render(scene, camera);
       }
     }
   };
   session.requestAnimationFrame(onXRFrame);
 
-  // 可选：监听会话结束，清理资源
+  // 可选：会话结束清理资源
   session.addEventListener('end', () => {
     renderer.dispose();
     canvas.remove();
