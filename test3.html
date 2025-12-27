@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+  <title>WebXR 双目立方体（AR效果）</title>
+  <script src="https://unpkg.com/three@0.126.0/build/three.js"></script>
+  <style>
+    button { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 24px; font-size: 16px; }
+  </style>
+</head>
+<body>
+<button onclick="activateXR()">Start Hello WebXR（双目AR版）</button>
+<script>
+async function activateXR() {
+  // 1. 创建Canvas和WebGL上下文（强制开启深度缓冲）
+  const canvas = document.createElement("canvas");
+  document.body.appendChild(canvas);
+  const gl = canvas.getContext("webgl", {
+    xrCompatible: true,
+    depth: true, // 强制开启深度缓冲，避免渲染重叠
+    antialias: false // 关闭抗锯齿，减少缓冲冲突
+  });
+
+  // 2. Three.js 基础配置
+  const scene = new THREE.Scene();
+  // 立方体（移到正前方0.8米）
+  const cube = new THREE.Mesh(
+    new THREE.BoxBufferGeometry(0.2, 0.2, 0.2),
+    [
+      new THREE.MeshBasicMaterial({color: 0xff0000}),
+      new THREE.MeshBasicMaterial({color: 0x0000ff}),
+      new THREE.MeshBasicMaterial({color: 0x00ff00}),
+      new THREE.MeshBasicMaterial({color: 0xff00ff}),
+      new THREE.MeshBasicMaterial({color: 0x00ffff}),
+      new THREE.MeshBasicMaterial({color: 0xffff00})
+    ]
+  );
+  cube.position.set(0, 0, -0.8);
+  scene.add(cube);
+
+  // 渲染器配置
+  const renderer = new THREE.WebGLRenderer({
+    canvas: canvas,
+    context: gl,
+    alpha: true,
+    preserveDrawingBuffer: true
+  });
+  renderer.autoClear = false;
+  renderer.autoClearColor = false;
+  renderer.autoClearDepth = false;
+  renderer.autoClearStencil = false;
+
+  // 相机设置
+  const camera = new THREE.PerspectiveCamera();
+  camera.matrixAutoUpdate = false;
+
+  // 3. WebXR 会话初始化（保持AR模式）
+  const session = await navigator.xr.requestSession("immersive-ar");
+  const xrLayer = new XRWebGLLayer(session, gl);
+  session.updateRenderState({ baseLayer: xrLayer });
+  const referenceSpace = await session.requestReferenceSpace('local');
+
+  // 4. 双目渲染循环（修改缓冲清理逻辑）
+  const onXRFrame = (time, frame) => {
+    session.requestAnimationFrame(onXRFrame);
+    const pose = frame.getViewerPose(referenceSpace);
+    if (!pose) return;
+
+    // 关键修改：只绑定帧缓冲，不清除颜色缓冲（保留真实世界背景）
+    gl.bindFramebuffer(gl.FRAMEBUFFER, xrLayer.framebuffer);
+    // 只清理深度缓冲，不清理颜色缓冲（避免覆盖真实世界画面）
+    gl.clearDepth(1.0);
+    gl.clear(gl.DEPTH_BUFFER_BIT); // 仅清除深度缓冲
+
+    // 遍历左右眼视图
+    for (const view of pose.views) {
+      const viewport = xrLayer.getViewport(view);
+      renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+      renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
+      renderer.setScissorTest(true);
+
+      // 更新相机矩阵
+      camera.matrix.fromArray(view.transform.matrix);
+      camera.projectionMatrix.fromArray(view.projectionMatrix);
+      camera.updateMatrixWorld(true);
+
+      // 无清理渲染当前眼的场景
+      renderer.render(scene, camera, null, false);
+    }
+    renderer.setScissorTest(false);
+  };
+  session.requestAnimationFrame(onXRFrame);
+
+  // 会话结束清理
+  session.addEventListener('end', () => {
+    renderer.dispose();
+    canvas.remove();
+  });
+}
+</script>
+</body>
+</html>
